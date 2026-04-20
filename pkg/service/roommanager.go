@@ -74,6 +74,7 @@ type RoomManager struct {
 	versionGenerator  utils.TimedVersionGenerator
 	turnAuthHandler   *TURNAuthHandler
 	bus               psrpc.MessageBus
+	cfTurnManager     *CloudflareTurnManager
 
 	rooms map[livekit.RoomName]*rtc.Room
 
@@ -101,6 +102,17 @@ func NewLocalRoomManager(
 		return nil, err
 	}
 
+	// Initialize Cloudflare TURN manager
+	cfTurnManager := NewCloudflareTurnManager()
+	if cfTurnManager != nil {
+		if err := cfTurnManager.Start(); err != nil {
+			logger.Warnw("Failed to start Cloudflare TURN manager", err)
+			cfTurnManager = nil
+		} else {
+			logger.Infow("Cloudflare TURN manager started successfully")
+		}
+	}
+
 	return &RoomManager{
 		config:            conf,
 		rtcConfig:         rtcConf,
@@ -114,6 +126,7 @@ func NewLocalRoomManager(
 		versionGenerator:  versionGenerator,
 		turnAuthHandler:   turnAuthHandler,
 		bus:               bus,
+		cfTurnManager:     cfTurnManager,
 
 		rooms: make(map[livekit.RoomName]*rtc.Room),
 
@@ -226,6 +239,11 @@ func (r *RoomManager) Stop() {
 		if r.rtcConfig.TCPMuxListener != nil {
 			_ = r.rtcConfig.TCPMuxListener.Close()
 		}
+	}
+
+	// Stop Cloudflare TURN manager
+	if r.cfTurnManager != nil {
+		r.cfTurnManager.Stop()
 	}
 }
 
@@ -778,6 +796,16 @@ func (r *RoomManager) UpdateRoomMetadata(ctx context.Context, req *livekit.Updat
 func (r *RoomManager) iceServersForParticipant(apiKey string, participant types.LocalParticipant, tlsOnly bool) []*livekit.ICEServer {
 	var iceServers []*livekit.ICEServer
 	rtcConf := r.config.RTC
+
+	// Check if Cloudflare TURN is available and use it first
+	if r.cfTurnManager != nil {
+		cfIceServers := r.cfTurnManager.GetICEServers()
+		if cfIceServers != nil && len(cfIceServers) > 0 {
+			logger.Debugw("Using Cloudflare ICE servers (STUN+TURN)", "count", len(cfIceServers))
+			iceServers = append(iceServers, cfIceServers...)
+			return iceServers
+		}
+	}
 
 	if tlsOnly && r.config.TURN.TLSPort == 0 {
 		logger.Warnw("tls only enabled but no turn tls config", nil)
