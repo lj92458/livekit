@@ -1,0 +1,61 @@
+version: '3.8'
+
+services:
+  livekit:
+    image: livekit/livekit-server:latest
+    container_name: livekit-server
+    ports:
+      - "7880:7880"    # RoomService and RTC endpoint
+      - "7881:7881"    # WebRTC ICE over TCP
+      - "50000-60000:50000-60000/udp"  # UDP port range
+    environment:
+      # Basic configuration
+      - LIVEKIT_KEYS=devkey:secret
+      - LIVEKIT_REGION=us-west-1
+      - LIVEKIT_NODE_IP=127.0.0.1
+      
+      # Redis configuration (required)
+      - LIVEKIT_REDIS_ADDRESS=redis:6379
+      
+      # Cloudflare TURN configuration
+      - CF_TURN_KEY_ID=${CF_TURN_KEY_ID}
+      - CF_TURN_API_TOKEN=${CF_TURN_API_TOKEN}
+      - CF_TURN_TTL=${CF_TURN_TTL:-86400}  # Optional, defaults to 86400 seconds (24 hours)
+      
+      # Logging
+      - LIVEKIT_LOGGING_LEVEL=info
+      - LIVEKIT_LOGGING_PION_LEVEL=error
+    depends_on:
+      - redis
+    networks:
+      - livekit-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7880"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  redis:
+    image: redis:7-alpine
+    container_name: livekit-redis
+    ports:
+      - "6379:6379"
+    command: redis-server --save "" --appendonly no
+    networks:
+      - livekit-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+networks:
+  livekit-network:
+    driver: bridge
+
+# Create a .env file with the following content:
+# CF_TURN_KEY_ID=your-cloudflare-turn-key-id
+# CF_TURN_API_TOKEN=your-cloudflare-api-token
+# CF_TURN_TTL=86400  # Optional
